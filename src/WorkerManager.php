@@ -60,6 +60,6 @@ class WorkerManager extends Observable
 
     public function fileChangeFilter(WatchEvent $e)
     {
-        return $e->getBitwise() & (WatchEvent::UPDATED | WatchEvent::CREATED);
+        return $e->getBitwise() & (WatchEvent::UPDATED | WatchEvent::CREATED | WatchEvent::RENAMED);
     }
 }
