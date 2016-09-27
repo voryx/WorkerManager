@@ -38,7 +38,8 @@ class WorkerManager extends Observable
             });
 
         $this->processes = $workers->merge($newWorkers)->map(function ($file) {
-            return [new ProcessSubject("php {$file}", $this->errors), $file];
+            $php = PHP_BINARY;
+            return [new ProcessSubject("{$php} {$file}", $this->errors), $file];
         });
     }
 
