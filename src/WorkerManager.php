@@ -2,12 +2,12 @@
 
 namespace Voryx;
 
+use Rx\DisposableInterface;
 use Rx\Observable;
 use Rx\ObserverInterface;
 use Rx\React\FsWatch;
 use Rx\React\ProcessSubject;
 use Rx\React\WatchEvent;
-use Rx\SchedulerInterface;
 use Rx\Subject\Subject;
 
 class WorkerManager extends Observable
@@ -17,7 +17,7 @@ class WorkerManager extends Observable
     private $fswatch;
     private $processes;
 
-    public function __construct($path, ObserverInterface $errors = null, ObserverInterface $fswatch = null, ObserverInterface $workers = null)
+    public function __construct($path, ObserverInterface $errors = null, ObserverInterface $fswatch = null, Observable $workers = null)
     {
         $this->path    = $path;
         $this->errors  = $errors ?: new Subject();
@@ -37,30 +37,44 @@ class WorkerManager extends Observable
                 return $e->getFile();
             });
 
-        $this->processes = $workers->merge($newWorkers)->map(function ($file) {
-            $php = PHP_BINARY;
-            return [new ProcessSubject("{$php} {$file}", $this->errors), $file];
-        });
+        $this->processes = $workers
+            ->merge($newWorkers)
+            ->map(function ($file) {
+                $php = PHP_BINARY;
+                return [new ProcessSubject("exec {$php} {$file}", $this->errors), $file];
+            })
+            ->share();
     }
 
-    public function subscribe(ObserverInterface $observer, SchedulerInterface $scheduler = null)
+    public function _subscribe(ObserverInterface $observer): DisposableInterface
     {
-        return $this->processes->flatMap(function ($args) {
-            /* @var $process Observable */
-            list($process, $file) = $args;
+        return $this->processes
+            ->flatMap(function ($args) {
+                /* @var $process ProcessSubject */
+                list($process, $file) = $args;
 
-            $fileUpdated = $this->fswatch
-                ->filter(function (WatchEvent $e) use ($file) {
-                    return substr($e->getFile(), 0, strlen($file)) === $file;
-                })
-                ->filter([$this, 'fileChangeFilter']);
+                $fileUpdated = $this->fswatch
+                    ->filter(function (WatchEvent $e) use ($file) {
+                        return 0 === strpos($e->getFile(), $file);
+                    })
+                    ->filter([$this, 'fileChangeFilter']);
 
-            return $process->takeUntil($fileUpdated);
-        })->subscribe($observer, $scheduler);
+                return $process
+                    ->takeUntil($fileUpdated)
+                    ->map(function ($output) use ($process, $file) {
+                        return [$output, $process->getProcess(), $file];
+                    });
+            })
+            ->subscribe($observer);
     }
 
     public function fileChangeFilter(WatchEvent $e)
     {
         return $e->getBitwise() & (WatchEvent::UPDATED | WatchEvent::CREATED | WatchEvent::RENAMED);
+    }
+
+    public function getProcesses(): Observable\RefCountObservable
+    {
+        return $this->processes;
     }
 }
